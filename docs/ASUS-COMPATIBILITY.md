@@ -1,53 +1,26 @@
-# Original ASUS display extensions
+# ASUS display extension
 
-ASUS supplies display settings in a signed extension package alongside its base AMD driver. Windows can apply an extension after the base driver and retain the extension across base-driver updates. This gives a way to use an AMD base driver together with matching OEM customization. [Microsoft extension INF documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/using-an-extension-inf-file)
+ASUS distributes some OEM display policies as a signed extension INF. Windows applies an applicable extension alongside the installed base driver. The matching INF can carry display and panel settings across a base-driver update. [Microsoft extension INF documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/using-an-extension-inf-file)
 
-## What was found
+The ASUS package examined here provides model and revision matching for AMD GPU hardware IDs, including the Navi 33 discrete GPU and Rembrandt integrated GPU in the TUF A16 FA617NT. The extension contains refresh policies such as `DalVirtualizedRefreshRateSupport` and `DalDLRCFeatureEnable`, plus a panel-specific override table in the integrated GPU section. Its effect depends on the driver and matching device. The extension was already active during the initial stutter reproduction, and a separate stability benefit has not been measured.
 
-The investigated ASUS `amduw23e.inf` version 32.0.21040.6 includes exact AMD PCI hardware IDs with ASUS subsystem IDs and revision matching. Its extension ID is `{07A2A561-D001-4503-B239-EF2FE0379EFB}`. One package supports multiple models and GPU families, with different install sections chosen by the hardware match.
+## Install the matching package
 
-| Policy | Observed ASUS setting | Interpretation boundary |
-|---|---|---|
-| `DalVirtualizedRefreshRateSupport` | 0 for both reference GPUs | Private AMD policy |
-| `DalSupportExternalPanelDrr` | 1 for both reference GPUs | The name concerns external-panel DRR |
-| `DalMonitorSpecificDrrOverride` | A 492-byte panel table on the integrated GPU | Panel-specific data should follow the original INF matching |
-| `DalDLRCFeatureEnable` | 5 in the newer ASUS package | Runtime semantics require vendor context |
-| `StutterMode` | 0x200A in both compared ASUS and generic Navi 33 base paths | This value did not distinguish smooth and failing packages |
+Test SmartAccess Graphics on the base driver first. If you install the optional extension, test again before changing any other settings. [Clean install and SAG checks](CLEAN-INSTALL.md)
 
-The generic base INF omitted explicit additions for several OEM values. The effective state also depends on compiled defaults, surviving registry state and active extensions. A registry-value name alone cannot establish a stability or power benefit.
+1. Download the graphics package for the exact laptop model from ASUS Support and extract it. In the display driver directory, locate the original `amduw23e.inf` and `amduw23e.cat`. Keep the `amdpcibridge` subdirectory intact when present, with its own INF and catalog. The tested Navi 33 section references that directory through `CopyINF`.
+2. Open a terminal as administrator in the directory containing the display INF. Install the extension with Windows PnPUtil.
 
-The ASUS extension was installed and active on the reference system while the current driver's cursor stutter persisted. The PSR-disable override supplied the verified improvement. No separate stability increase from reinstalling the already-active extension was demonstrated.
+   ```powershell
+   pnputil /add-driver .\amduw23e.inf /install
+   ```
 
-## Simple installation
+3. Restart Windows if requested, then check the actual driver association.
 
-Obtain the AMD graphics package for the exact laptop model from ASUS support. Extract it using the package's extraction option or a tool capable of extracting its archive. Locate the directory containing the following original files.
+   ```powershell
+   pnputil /enum-devices /class Display /connected /drivers
+   ```
 
-```text
-amduw23e.inf
-amduw23e.cat
-amdpcibridge/
-    amdpcibridgeextension.inf
-    amdpcibridgeextension.cat
-```
+In the output, check the base driver version and look for the extension's published name under **Extension Driver Names**. A newer matching extension can take precedence. Windows verifies the catalog and hardware match during staging and installation. [PnPUtil reference](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/pnputil-command-syntax)
 
-The Navi 33 extension install section declares the PCI bridge dependency through `CopyINF`. Keep the original relative directory. The dependency matches AMD PCI bridge device IDs 1478 and 1479 and contains bridge-specific properties. Windows determines which connected devices match it.
-
-Double-click **ASUS-Extension.cmd**, paste the directory path and allow the administrator prompt. For a read-only package check, run the following from the project directory.
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-ASUS-Extension.ps1 -PackageFolder "D:\Extracted-ASUS\Packages\Drivers\Display\WT6A_INF"
-```
-
-Add `-Install` to install. The helper validates the expected extension identity, matching present ASUS AMD display hardware and both catalog signatures. Windows performs catalog membership checks when staging the package. The helper installs only the two named extension packages and checks the matched GPUs' base-driver versions afterward.
-
-PnPUtil applies the highest-ranked applicable package. Successful staging alone does not prove that this version is associated with the device. The helper displays per-device driver information so the extension association can be checked. A newer installed extension may take precedence. Restart Windows if requested, then check the cursor tool's Status and test the original mouse behavior. [PnPUtil installation behavior](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/pnputil-command-syntax)
-
-## Applicability and recovery
-
-Use the original package for the laptop model. Copying a panel table or generic registry bundle into another GPU loses the OEM's section and hardware matching. The helper therefore delegates application to the original INF and Windows selection rules.
-
-This helper has been checked against the signed extension from the reference ASUS package. Its matching and signature checks are also useful for another package using the same extension identity. Support for unrelated OEM packages would require a separate review.
-
-The PSR tool's Restore action reverses its single registry override. OEM-extension installation is managed separately by Windows. To return to an OEM software baseline, use the original model-specific driver installer. Removing an extension from the Driver Store does not necessarily reconstruct every registry value it previously supplied, so this project does not describe package deletion as a complete settings rollback.
-
-The release distributes this helper and documentation. Original AMD/ASUS driver files remain with their original vendor downloads and licenses.
+Installing the extension may update settings on both GPUs. Keep the package contents unmodified and let Windows use the original hardware matching. For a full return to a known configuration, reinstall the working driver package and retest. Deleting an extension from the Driver Store may leave settings it previously supplied.

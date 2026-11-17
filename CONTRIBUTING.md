@@ -2,7 +2,7 @@
 
 Useful reports identify whether the same PSR-dependent symptom occurs on another driver, panel or GPU. Include the GPU shown under Connected to, the driver version for that GPU, Windows build, display refresh rate, mouse model/connection/polling rate, and behavior before Apply, after Apply and after Restore.
 
-Please test with an ordinary cursor. Pointer trails or a padded-cursor workaround can hide the hardware-cursor path under investigation. If possible, include observations after reboot and sleep/wake and whether power source changes the result.
+Please test with an ordinary cursor. Pointer trails or a padded-cursor workaround can hide the hardware-cursor path under investigation. If possible, include observations after reboot and sleep/wake and whether power source changes the result. For SmartAccess Graphics, record the panel's connected GPU before launching a game, while it runs and after it closes. Report which adapters received the override, whether an OEM extension was installed and whether switching worked on the clean driver.
 
 Run `tests/Test-PsrFix.ps1` in Windows PowerShell 5.1 before submitting changes to the registry logic. It uses an isolated HKCU subtree and exercises absent values, typed restoration, repeated operations, interrupted-operation recovery and separate adapters. Code changes should preserve the original backup before any adapter write and keep changes scoped to the selected device.
 

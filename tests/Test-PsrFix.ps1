@@ -1,73 +1,66 @@
-# Tests use an isolated HKCU subtree. Display hardware is never restarted.
+# Tests use an isolated HKCU subtree and do not restart display devices.
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot '..\src\PsrFix.psm1') -Force
+. (Join-Path $PSScriptRoot '..\Fix-Cursor.ps1')
 $testPath = 'Software\AMDPSRCursorFix-Tests-' + [guid]::NewGuid().ToString('N')
 $root = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($testPath)
-$module = Get-Module PsrFix
-& $module { param($Root) $script:RegistryRoot = $Root } $root
-$adapter = [pscustomobject]@{ Name='Test AMD'; InstanceId='PCI\VEN_1002&DEV_TEST\ONE'; RegistryPath='TestDisplay\0001'; DriverVersion='1.0' }
-$key = $root.CreateSubKey($adapter.RegistryPath)
-$key.Dispose()
-$count = 0
-function Assert-True($Condition, $Message) {
-    if (!$Condition) { throw $Message }
-    $script:count++
+$script:RegistryRoot = $root
+$rx = [pscustomobject]@{ Name='RX'; InstanceId='PCI\VEN_1002&DEV_7480&SUBSYS_15131043&REV_C1\ONE'; RegistryPath='Display\0001' }
+$igpu = [pscustomobject]@{ Name='iGPU'; InstanceId='PCI\VEN_1002&DEV_1681&SUBSYS_15131043&REV_0A\TWO'; RegistryPath='Display\0000' }
+$rxKey = $root.CreateSubKey($rx.RegistryPath)
+$iGpuKey = $root.CreateSubKey($igpu.RegistryPath)
+
+function Assert-True($Condition, $Message) { if (!$Condition) { throw $Message } }
+function Get-CimInstance { param($ClassName, $ErrorAction) [pscustomobject]@{ Model='ASUS TUF Gaming A16 FA617NT_FA617NT' } }
+function Get-Saved($Adapter) {
+    $journal = $root.OpenSubKey((Get-BackupPath $Adapter))
+    try { Read-Backup $Adapter $journal } finally { if ($journal) { $journal.Dispose() } }
 }
+
 try {
-    Set-PsrPolicy $adapter Apply | Out-Null
-    Assert-True ((Get-PsrValue $adapter).Value -eq 0) 'Apply did not write zero.'
-    Set-PsrPolicy $adapter Apply | Out-Null
-    Assert-True (!(Get-PsrBackup $adapter).Original.Exists) 'Repeated Apply replaced the original absent-value backup.'
-    Set-PsrPolicy $adapter Restore | Out-Null
-    Assert-True (!(Get-PsrValue $adapter).Exists) 'Restore did not remove a previously absent value.'
-    Assert-True (!(Set-PsrPolicy $adapter Restore).Changed) 'Repeated Restore should be a no-op.'
+    Assert-True ((Select-Adapter @($igpu, $rx) '' Apply) -eq $rx) 'Apply must select only the RX 7700S on this A16.'
+    $refused = $false
+    try { Select-Adapter @($igpu, $rx) $igpu.InstanceId Apply | Out-Null } catch { $refused = $true }
+    Assert-True $refused 'The integrated GPU should be unavailable for Apply.'
+    Assert-True ((Select-Adapter @($igpu, $rx) $igpu.InstanceId Restore) -eq $igpu) 'Restore must still allow repair of the integrated GPU.'
 
-    $cases = @(
-        @{ Kind='DWord'; Value=7 },
-        @{ Kind='DWord'; Value=0 },
-        @{ Kind='QWord'; Value=[long]9223372036854775806 },
-        @{ Kind='Binary'; Value=[byte[]](0,127,255) },
-        @{ Kind='Binary'; Value=[byte[]]@() },
-        @{ Kind='String'; Value='original' },
-        @{ Kind='ExpandString'; Value='%SystemRoot%\literal' },
-        @{ Kind='MultiString'; Value=[string[]]('a','b') }
-    )
-    foreach ($case in $cases) {
-        $key = $root.OpenSubKey($adapter.RegistryPath,$true)
-        $key.SetValue('DalPSRFeatureEnable',$case.Value,[Microsoft.Win32.RegistryValueKind]$case.Kind)
-        $key.Dispose()
-        Set-PsrPolicy $adapter Apply | Out-Null
-        Set-PsrPolicy $adapter Restore | Out-Null
-        $result = Get-PsrValue $adapter
-        Assert-True ($result.Kind -eq $case.Kind) "Wrong restored type for $($case.Kind)."
-        Assert-True (($result.Value | ConvertTo-Json -Compress) -eq ($case.Value | ConvertTo-Json -Compress)) "Wrong restored data for $($case.Kind)."
-    }
-    Set-PsrPolicy $adapter Default | Out-Null
-    Assert-True (!(Get-PsrValue $adapter).Exists) 'Default failed to remove override.'
-    Set-PsrPolicy $adapter Restore | Out-Null
-    Assert-True ((Get-PsrValue $adapter).Kind -eq 'MultiString') 'Default could not be undone.'
+    Set-PsrPolicy $rx Apply | Out-Null
+    Assert-True ((Get-PsrValue $rxKey).Value -eq 0) 'Apply did not write zero.'
+    Set-PsrPolicy $rx Apply | Out-Null
+    Assert-True (!(Get-Saved $rx).Original.Exists) 'Repeat Apply replaced the backup.'
+    Assert-True (!(Get-PsrValue $iGpuKey).Exists) 'Apply changed the other adapter.'
+    Set-PsrPolicy $rx Restore | Out-Null
+    Assert-True (!(Get-PsrValue $rxKey).Exists) 'Restore must delete a previously absent value.'
+    Assert-True ((Get-Saved $rx).State -eq 'Restored') 'Restore should close the transaction.'
 
-    # Simulate a stopped process after journaling the original value.
-    Set-PsrPolicy $adapter Apply | Out-Null
-    & $module {
-        param($Adapter)
-        $record = Get-PsrBackup $Adapter
-        $record.State = 'Prepared'
-        Save-PsrBackup $Adapter $record
-    } $adapter
-    Set-PsrPolicy $adapter Apply | Out-Null
-    Set-PsrPolicy $adapter Restore | Out-Null
-    Assert-True ((Get-PsrValue $adapter).Kind -eq 'MultiString') 'Retry after interruption overwrote original data.'
+    $rxKey.SetValue('DalPSRFeatureEnable', 7, [Microsoft.Win32.RegistryValueKind]::DWord)
+    Set-PsrPolicy $rx Apply | Out-Null
+    $journal = $root.OpenSubKey((Get-BackupPath $rx), $true)
+    $backup = Read-Backup $rx $journal
+    $backup.State = 'Prepared'
+    $journal.SetValue('Record', ($backup | ConvertTo-Json -Compress -Depth 4))
+    $journal.Dispose()
+    Set-PsrPolicy $rx Apply | Out-Null
+    Set-PsrPolicy $rx Restore | Out-Null
+    Assert-True ((Get-PsrValue $rxKey).Value -eq 7) 'Retry from Prepared lost the original DWORD.'
 
-    $second = [pscustomobject]@{ Name='Other'; InstanceId='PCI\VEN_1002&DEV_TEST\TWO'; RegistryPath='TestDisplay\0002'; DriverVersion='2.0' }
-    $key = $root.CreateSubKey($second.RegistryPath)
-    $key.Dispose()
-    Assert-True ($null -eq (Get-PsrBackup $second)) 'Backup leaked across adapters.'
-    Set-PsrPolicy $second Apply | Out-Null
-    Assert-True ((Get-PsrValue $adapter).Kind -eq 'MultiString') 'Applying another adapter changed the first.'
-    Write-Host "Passed $count registry lifecycle assertions."
+    $rxKey.SetValue('DalPSRFeatureEnable', 'unexpected')
+    $refused = $false
+    try { Set-PsrPolicy $rx Apply | Out-Null } catch { $refused = $true }
+    Assert-True ($refused -and (Get-PsrValue $rxKey).Value -eq 'unexpected') 'Apply must preserve an unexpected existing type.'
+
+    # An existing v1 backup must remain usable after replacing the old tool.
+    $iGpuKey.SetValue('DalPSRFeatureEnable', 0, [Microsoft.Win32.RegistryValueKind]::DWord)
+    $journal = $root.CreateSubKey((Get-BackupPath $igpu))
+    $legacy = @{ Schema=1; InstanceId=$igpu.InstanceId; RegistryPath=$igpu.RegistryPath; State='Applied'; Original=@{ Exists=$true; Kind='Binary'; Value=@(0,127,255) } }
+    $journal.SetValue('Record', ($legacy | ConvertTo-Json -Compress -Depth 4))
+    $journal.Dispose()
+    Set-PsrPolicy $igpu Restore | Out-Null
+    $value = Get-PsrValue $iGpuKey
+    Assert-True ($value.Kind -eq 'Binary' -and ($value.Value -join ',') -eq '0,127,255') 'The v1 backup was not restored.'
+    Write-Host 'Adapter selection and registry restore checks passed.'
 } finally {
-    & $module { $script:RegistryRoot = [Microsoft.Win32.Registry]::LocalMachine }
+    $iGpuKey.Dispose()
+    $rxKey.Dispose()
     $root.Dispose()
-    [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($testPath,$false)
+    [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($testPath, $false)
 }
