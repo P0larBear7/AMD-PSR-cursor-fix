@@ -1,0 +1,59 @@
+{
+  "method": "Automated original 32-pixel cursor, approximately 200 Hz movement, mover-thread function-5019 callback wall durations. Physical 1000 Hz smoothness was confirmed separately.",
+  "reference_gpu": "Radeon RX 7700S",
+  "panel_refresh_hz": 165,
+  "windows_build": "26300.9818",
+  "runs": [
+    {
+      "configuration": "AMD 26.11.1 initial",
+      "calls": 855,
+      "median_ms": 0.4954,
+      "p95_ms": 0.6182,
+      "sampled_stacks": {
+        "samples": 364,
+        "lock_function": 193,
+        "cursor_info": 131
+      }
+    },
+    {
+      "configuration": "ASUS 32.0.21040.6",
+      "calls": 922,
+      "median_ms": 0.0939,
+      "p95_ms": 0.1847,
+      "sampled_stacks": {
+        "samples": 78,
+        "lock_function": 0,
+        "cursor_info": 48
+      }
+    },
+    {
+      "configuration": "AMD 26.11.1 restored",
+      "calls": 871,
+      "median_ms": 0.481,
+      "p95_ms": 0.5564,
+      "sampled_stacks": {
+        "samples": 365,
+        "lock_function": 191,
+        "cursor_info": 139
+      }
+    },
+    {
+      "configuration": "AMD 26.11.1 PSR disabled",
+      "calls": 935,
+      "median_ms": 0.0504,
+      "p95_ms": 0.0922
+    },
+    {
+      "configuration": "AMD 26.11.1 default PSR restored",
+      "calls": 878,
+      "median_ms": 0.49575,
+      "p95_ms": 0.5929
+    },
+    {
+      "configuration": "AMD 26.11.1 PSR disabled again",
+      "calls": 979,
+      "median_ms": 0.0375,
+      "p95_ms": 0.096
+    }
+  ]
+}

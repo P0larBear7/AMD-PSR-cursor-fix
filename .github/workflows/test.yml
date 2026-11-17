@@ -1,0 +1,25 @@
+name: Windows tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  registry-lifecycle:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse PowerShell sources
+        shell: powershell
+        run: |
+          $failed = $false
+          Get-ChildItem -Recurse -Include *.ps1,*.psm1 | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName,[ref]$tokens,[ref]$errors) | Out-Null
+            if ($errors) { $errors | Format-List; $failed = $true }
+          }
+          if ($failed) { throw 'PowerShell parse errors' }
+      - name: Test registry lifecycle
+        shell: powershell
+        run: .\tests\Test-PsrFix.ps1

@@ -1,0 +1,12 @@
+/dist/
+*.etl
+*.etl.*
+*.cab
+*.exe
+*.sys
+*.cat
+*.inf
+*.log
+__pycache__/
+.DS_Store
+Thumbs.db
