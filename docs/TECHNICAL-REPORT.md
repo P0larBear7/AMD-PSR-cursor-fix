@@ -62,6 +62,7 @@ The reference system ran smoothly on generic AMD 25.9.2 and stuttered on 25.10.2
 | AMD 25.10.1 Battlefield 6 Preview | 32.0.21025.25005 | 7.0.45.0 | Static comparison only |
 | AMD 25.10.2 | 32.0.22021.1009 | 7.0.46.1 | First failing version tested |
 | ASUS OEM | 32.0.21040.6 | 7.0.45.0 | Smooth in the reference test and paired trace captured |
+| AMD 26.6.2 | 32.0.31021.1015 | 7.0.47.0 | Static comparison. Retains the single-eDP PSR1 lock branch and two-read wait. |
 | AMD 26.11.1 | 32.0.32015.16001 | 7.0.49.1 | Slow path captured, workaround verified |
 
 The known-good generic and ASUS kernel binaries gate DMUB cursor hardware locking with existing link-state tests. The first failing 25.10.2 binary adds a helper whose additional branch checks a PSR enum value and the presence of a single eDP link. This matches the structure and constants of AMD's public change enabling hardware-lock-manager use for PSR1 with one eDP panel. Function-name mapping in the proprietary Windows binary is inferred from that structural match. [AMD-authored source change](https://github.com/torvalds/linux/commit/acbf16a6ae775b4db86f537448cc466288aa307e)
@@ -69,6 +70,10 @@ The known-good generic and ASUS kernel binaries gate DMUB cursor hardware lockin
 The host wait loop also changed. The older loop calls one hardware-status reader and compares its result with cached state. The first failing and current loops call two status readers and perform additional completion-state checks. The public AMD implementation contains related command-completion and concurrent-submission logic. Similarity helps interpret the binary, but does not prove that a particular Linux commit is the Windows regression's sole cause. [AMD command-wait change](https://github.com/torvalds/linux/commit/dd141b16b3a2979a01194615dfe87dbba9d87045)
 
 Current-driver stack paths contain a hardware-lock command builder with type `0x45` and a cursor-information builder with type `0x44`. Lock, cursor-information and unlock call sites reach the synchronous wait loop. The host-side changes and reversible PSR experiment show that the response depends on the driver's selected display path.
+
+On the tested panel, the older ASUS driver still submitted cursor information through DMUB. Its sampled pointer stacks had no hardware-lock command wait, and the same test measured a 0.094 ms median. The 25.9.2 and ASUS binaries also retain the SmartMux preparation dispatcher and the PSR event handlers for normal PSR deferral (`0x800`) and dynamic display switching (`0x100`). Their behavior is consistent with a shorter hardware-cursor path alongside the existing PSR-based GPU handoff.
+
+The signed RX 7700S package for 26.6.2 exactly matches the reference hardware ID. It was screened because it introduced AMD's driver-level FSR Upscaling 4.1 support for RX 7000. Its RX kernel already has the added branch and revised wait loop. The different firmware version leaves open whether its runtime timing differs. This package was inspected offline. [AMD 26.6.2 release notes](https://www.amd.com/en/resources/support-articles/release-notes/RN-RAD-WIN-26-6-2.html)
 
 Recent AMD packages in the investigation contained separate base-driver branches for different architectures. The RX and integrated GPU used different Windows versions after the current package was restored. Package size and architecture splitting can explain why downloads look different, but neither identifies the cursor regression. Match the actual installed adapter, INF and loaded kernel image for every measurement.
 
@@ -165,6 +170,23 @@ A separate 60 Hz test set `DalFeatureGlitchlessPsrMuxSwitch` to `0` on the RX al
 
 With PSR enabled, `DalPSRPowerOpt = 0` preserved both switch directions. An initial comparison suggested shorter callbacks, but a matched repeat at 60 Hz measured a median of 0.324 ms with default policies and 0.356 ms with `DalPSRPowerOpt = 0` and `DalPSRSkipCRTCPowerDown = 1`. Both traces matched every stock-arrow movement to a pointer callback and reported zero lost events and buffers. The policy change preserved SAG but did not reproduce the cursor improvement under matched conditions. These settings were restored after testing.
 
+### Testing with PSR enabled at 165 Hz
+
+`DalPSRPowerUsePhyFSM` controls a field in the DMCUB PSR setup message. Changing it leaves PSR support intact. The test used the same RX driver, AC power, the factory 165 Hz mode and GPU-Z to trigger the handoffs. All four runs completed both switch directions. All programmed moves in the ordinary-arrow intervals had matching pointer callbacks, with zero ETW lost events or buffers. [AMD firmware setup code](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/amd/display/dc/dce/dmub_psr.c)
+
+| Test order | RX PSR PHY policy | Callbacks | Median | p95 |
+|---|---|---:|---:|---:|
+| First pair, first run | Default | 892 | 0.326 ms | 0.545 ms |
+| First pair, second run | `DalPSRPowerUsePhyFSM = 0` | 908 | 0.248 ms | 0.504 ms |
+| Reverse pair, first run | `DalPSRPowerUsePhyFSM = 0` | 889 | 0.318 ms | 0.545 ms |
+| Reverse pair, second run | Default | 908 | 0.439 ms | 0.600 ms |
+
+The setting reduced the median in both orders. Long callbacks remained, and the test did not measure a visual change with a physical 1000 Hz mouse. The original registry value and driver state were restored after each comparison.
+
+Setting both `DalPSRPowerUsePhyFSM = 0` and `DalPSRPowerOpt = 0` preserved the handoffs. Its median and p95 were 0.326 ms and 0.541 ms, compared with 0.316 ms and 0.519 ms at defaults in the same pair. Combining the changes provided no timing benefit in that run.
+
+An independent test set `DalDisableIdlePowerOptimizations = 1` with default PSR. Both GPU-Z handoffs completed. Median and p95 were 0.416 ms and 0.544 ms, compared with 0.329 ms and 0.545 ms at defaults. The trace matched 884 of 884 cursor moves, with zero lost events or buffers. This idle policy did not resolve the native cursor delay. The original setting was restored.
+
 Reliable SAG and smooth native hardware cursor behavior remain unresolved on this configuration. Keep default PSR settings on both adapters when SAG is required. [Recovery and retest](CLEAN-INSTALL.md#check-smartaccess-graphics)
 
 ## Practical limits and further work
@@ -173,6 +195,6 @@ The remedy disables a power-saving feature. Idle power and battery-life impact s
 
 The current driver remains available for its supported rendering features. Game-specific FSR override activation was not measured in these cursor experiments. Support for such features depends on the driver, GPU and game independently of the cursor setting.
 
-Further engineering work could preserve PSR while reducing cursor-command synchronization cost, improve host polling or firmware service time, or use a supported cursor-offload path. Which change is correct requires driver-vendor validation. This project provides a reproducible configuration remedy and evidence suitable for that investigation.
+The older driver behavior suggests the scope of an AMD fix. Preserve PSR during SmartMux preparation, then reduce or coalesce the firmware waits on the native cursor update path. A driver fix needs to retain synchronization when register access would race PSR. A validation run should check both SAG directions and stock-cursor smoothness at 1000 Hz on the same internal panel.
 
 Community validation should prioritize a stable Windows release, more affected systems, reboot and sleep/wake behavior, battery measurements and future AMD drivers. A future driver that fixes the underlying path should be tested with the override removed so that PSR's power-saving behavior can be used again.
